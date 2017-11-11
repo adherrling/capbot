@@ -209,6 +209,8 @@ def run_bot(capped_users, token):
             #     users.append(user[0])
             # output = "\n".join(users)
             # await client.send_message(message.channel, output)
+        if message.content.startswith('!vis'):
+            await client.send_message(message.channel, "Fuck you")
 
     client.run(token)
 
