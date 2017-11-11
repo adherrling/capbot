@@ -78,7 +78,7 @@ def add_cap_to_db(clan_list):
     add_list = []
     capped_users = []
     for user in clan_list:
-        time.sleep(3)
+        time.sleep(2)
         cap_date = check_cap(user)
         if cap_date is not None:
             cap_date = datetime.datetime.strptime(cap_date, "%a, %d %b %Y %H:%M:%S %Z")
@@ -198,7 +198,8 @@ def run_bot(capped_users, token):
             user_updates += f"Cap: {user} has capped at the citadel at approximately: {curdate}.\n"
             user_updates += f"Adventurer's Log time: {cap_date}.\n"
         if user_updates != "":
-            await client.send_message(def_chan, user_updates)
+            await client.send_message(discord.Object(id='350087804564275200'),
+                                      user_updates)
 
     # @client.event
     # async def query_database(channel, statement, connection):
@@ -241,8 +242,9 @@ def run_bot(capped_users, token):
 
         elif message.author.name == "Roscroft" and message.channel.is_private:
             if not message.content == "Roscroft":
-                await client.send_message(discord.Object(id='350087804564275200'),
+                await client.send_message(discord.Object(id='307708375142105089'),
                                           message.content)
+        # id='350087804564275200'),
 
         elif message.content.startswith('!help'):
             await client.send_message(
