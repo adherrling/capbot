@@ -6,3 +6,4 @@ clancaps.db
 __pycache__
 pid.pid
 channel.txt
+logcaps.log

@@ -2,6 +2,7 @@
 """Reads in clan data html and parses out the list of clan members."""
 from html.parser import HTMLParser
 from random import shuffle
+import subprocess
 import argparse
 import datetime
 import json
@@ -63,7 +64,7 @@ def check_cap(user):
     for activity in activities:
         if "capped" in activity['details']:
             date = activity['date']
-            print(f"New cap! {user} capped on {date}.")
+            print(f"Cap found: {user} capped on {date}.")
             return activity['date']
     return None
 
@@ -162,13 +163,14 @@ def run_bot(capped_users, token):
         print('------')
         with open("channel.txt", "r") as channel_file:
             channel_id = channel_file.read().strip()
-        for (user, cap_date) in capped_users.reverse():
-            datetime_list = cap_date.split(" ")
-            date_report = datetime_list[0]
-            time_report = datetime_list[1]
-            msg_string = f"{user} has capped at the citadel on {date_report} at {time_report}."
-            await client.send_message(
-                discord.Object(id=channel_id), msg_string)
+        if capped_users != []:
+            for (user, cap_date) in capped_users.reverse():
+                datetime_list = cap_date.split(" ")
+                date_report = datetime_list[0]
+                time_report = datetime_list[1]
+                msg_string = f"{user} has capped at the citadel on {date_report} at {time_report}."
+                await client.send_message(
+                    discord.Object(id=channel_id), msg_string)
 
     @client.event
     async def on_message(message):
@@ -184,6 +186,10 @@ def run_bot(capped_users, token):
                     async for msg in client.logs_from(message.channel, limit=500):
                         if msg.author == client.user:
                             await client.delete_message(msg)
+                elif info == "noncap":
+                    async for msg in client.logs_from(message.channel, limit=500):
+                        if msg.author == client.user and "capped" not in msg.content:
+                            await client.delete_message(msg)
                 else:
                     # Try to interpret info as a message id. Thankfully bots fail gracefully
                     before_msg = await client.get_message(message.channel, info)
@@ -194,8 +200,12 @@ def run_bot(capped_users, token):
 
         elif message.content.startswith('!help'):
             await client.send_message(
-                message.channel, ("Use !delmsgs <id> do delete all messages before the provided "
-                                  "message id. Use '!delmsgs all' to delete all bot messages."))
+                message.channel, ("Use !delmsgs <id> to delete all messages before the given "
+                                  "message id.\nUsing 'all' instead of an id will delete all "
+                                  "messages, and using 'noncap' will delete all messages that "
+                                  "aren't cap reports.\n!update forces a manual update.\n!vis "
+                                  "is a test command.\n!list will provide an itemized list of "
+                                  "all caps that have an existing report in this channel."))
 
         elif message.content.startswith('!list'):
             userlist = []
@@ -210,6 +220,12 @@ def run_bot(capped_users, token):
             for i in range(len(userlist)):
                 ret_str += f"{i+1}. {userlist[i]}\n"
             await client.send_message(message.channel, ret_str)
+
+        elif message.content.startswith('!update'):
+            role_list = [role.name for role in message.author.roles]
+            if "cap handler" in role_list:
+                await client.send_message(message.channel, "Manually updating...")
+                subprocess.call(['./runcapbot.sh'])
 
     client.run(token)
 
