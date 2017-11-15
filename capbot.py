@@ -10,12 +10,12 @@ import discord
 from sqlalchemy import Column, Integer, String, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import create_engine
-from sqlalchemy.orm import SESSIONmaker
+from sqlalchemy.orm import sessionmaker
 
 ENGINE = create_engine(f"sqlite:////home/austin/Documents/capbot/clancaps.db")
-MASTER_SESSION = SESSIONmaker(bind=ENGINE)
+MASTER_SESSION = sessionmaker(bind=ENGINE)
 BASE = declarative_base()
-REQUEST_SESSION = requests.SESSION()
+REQUEST_SESSION = requests.session()
 SESSION = MASTER_SESSION()
 
 class Account(BASE):
@@ -46,25 +46,6 @@ class MyHTMLParser(HTMLParser):
             shuffle(clan_list)
             self.data = clan_list
 
-# def old_check_cap(user):
-#     """Given a feed url, returns true if the cap message is present."""
-#     feed_str = ""
-#     with open("/home/austin/Documents/capbot/url.txt", "r") as url_file:
-#         feed_str += url_file.read().strip()
-#     feed_str += user
-#     print(feed_str)
-#     user_feed = feedparser.parse(feed_str)
-#     try:
-#         print(user_feed['feed']['title'])
-#     except KeyError:
-#         print("User profile private.")
-#         return None
-#     for entry in user_feed['entries']:
-#         if entry.title == "Capped at my Clan Citadel.":
-#             print(f"{user} has capped.")
-#             return entry.published
-#     return None
-
 def check_cap(user):
     """Given a user, return cap date if it is in their activity history."""
     url_str = ""
@@ -82,7 +63,7 @@ def check_cap(user):
     for activity in activities:
         if "capped" in activity['details']:
             date = activity['date']
-            print(f"{user} capped on {date}.")
+            print(f"New cap! {user} capped on {date}.")
             return activity['date']
     return None
 
@@ -93,23 +74,21 @@ def add_cap_to_db(clan_list):
     for user in clan_list:
         cap_date = check_cap(user)
         if cap_date is not None:
-            cap_date = datetime.datetime.strptime(cap_date, "%d-%b-%Y %H:%M")
+            db_date = datetime.datetime.strptime(cap_date, "%d-%b-%Y %H:%M")
             # cap_date = datetime.datetime.strptime(cap_date, "%a, %d %b %Y %H:%M:%S %Z")
             # If the cap date is not None, that means the user has a cap in their adventurer's log.
             # We need to do a few things. First, check to see if the cap date is already stored in
             # the database under last_cap_reported
             previous_report = SESSION.query(
-                Account.last_cap_reported).filter(Account.name == user).first()
+                Account.last_cap_time).filter(Account.name == user).first()
             # Two outcomes: previous report is None, or it has a value. If it is none, then we
             # update it to be cap_date, and store the current time as last_cap_actual.
             # If it has a value, and it is the same as cap_date, we don't do anything. If it
             # has a different value, then we need to update the account dict in the same way as
             # if the previous report is none.
-            if previous_report is None or previous_report[0] < cap_date:
+            if previous_report is None or previous_report[0] < db_date:
                 primary_key_map = {"name": user}
-                account_dict = {"name": user,
-                                "last_cap_reported": cap_date,
-                                "last_cap_actual": datetime.datetime.now()}
+                account_dict = {"name": user, "last_cap_time": db_date}
                 account_record = Account(**account_dict)
                 add_list.append(upsert(Account, primary_key_map, account_record))
                 print(f"{user} last capped at the citadel on {cap_date}.")
@@ -131,29 +110,6 @@ def upsert(table, primary_key_map, obj):
             {column: getattr(obj, column) for column in keys})
         return None
     return obj
-
-# def erase_caps():
-#     """Run this to zero out the caps."""
-#     users = SESSION.query(Account).all()
-#     for user in users:
-#         total = SESSION.query(Account.total_caps).filter(Account.name == user.name).first()[0]
-#         capped = SESSION.query(
-#             Account.capped_this_week).filter(Account.name == user.name).first()[0]
-#         if total is None:
-#             total = 0
-#         if capped:
-#             SESSION.query(Account).filter(
-#                 Account.name == user.name).update({Account.total_caps: total+1})
-#     for user in users:
-#         SESSION.query(Account).filter(
-#             Account.name == user.name).update({Account.capped_this_week: False})
-#     primary_key_map = {"lid": 1}
-#     reset_dict = {"lid": 1, "last_reset": datetime.datetime.now()}
-#     reset = LastReset(**reset_dict)
-#     reset_obj = upsert(LastReset, primary_key_map, reset)
-#     if reset_obj is not None:
-#         SESSION.add(reset_obj)
-#     SESSION.commit()
 
 def main():
     """Runs the stuff."""
@@ -204,41 +160,21 @@ def run_bot(capped_users, token):
         print(client.user.name)
         print(client.user.id)
         print('------')
-        servers = client.servers
-        for server in servers:
-            def_chan = server.default_channel
-        user_updates = ""
-        for (user, cap_date) in capped_users:
-            curdate = datetime.datetime.now(datetime.timezone.utc).strftime("%a %b %d, %H:%M:%S")
-            user_updates += f"Cap: {user} has capped at the citadel at approximately: {curdate}.\n"
-            user_updates += f"Adventurer's Log time: {cap_date}.\n"
-        if user_updates != "":
-            await client.send_message(discord.Object(id='350087804564275200'),
-                                      user_updates)
-
-    # @client.event
-    # async def query_database(channel, statement, connection):
-    #     """Performs a simple sql query against the database"""
-    #     result = connection.execute(statement)
-    #     result_list = [row for row in result]
-    #     await client.send_message(channel, result_list)
+        with open("channel.txt", "r") as channel_file:
+            channel_id = channel_file.read().strip()
+        for (user, cap_date) in capped_users.reverse():
+            datetime_list = cap_date.split(" ")
+            date_report = datetime_list[0]
+            time_report = datetime_list[1]
+            msg_string = f"{user} has capped at the citadel on {date_report} at {time_report}."
+            await client.send_message(
+                discord.Object(id=channel_id), msg_string)
 
     @client.event
     async def on_message(message):
         """Handles commands based on messages sent"""
-        if message.content.startswith('!caplist'):
-            pass
-            # capped_users = SESSION.query(Account.name).all()
-            # users = []
-            # for user in capped_users:
-            #     users.append(user[0])
-            # ret_str = ""
-            # for i in range(len(users)):
-            #     ret_str += f"{i+1}. {users[i]}\n"
-            # await client.send_message(message.channel, ret_str)
-
-        elif message.content.startswith('!vis'):
-            await client.send_message(message.channel, "Fuck you")
+        if message.content.startswith('!vis'):
+            await client.send_message(message.channel, "It's actually ~vis")
 
         elif message.content.startswith('!delmsgs'):
             role_list = [role.name for role in message.author.roles]
@@ -256,12 +192,6 @@ def run_bot(capped_users, token):
                         if msg.author == client.user:
                             await client.delete_message(msg)
 
-        elif message.author.name == "Roscroft" and message.channel.is_private:
-            if not message.content == "Roscroft":
-                await client.send_message(discord.Object(id='307708375142105089'),
-                                          message.content)
-        # id='350087804564275200'),
-
         elif message.content.startswith('!help'):
             await client.send_message(
                 message.channel, ("Use !delmsgs <id> do delete all messages before the provided "
@@ -270,9 +200,11 @@ def run_bot(capped_users, token):
         elif message.content.startswith('!list'):
             userlist = []
             async for msg in client.logs_from(message.channel, limit=500):
-                if msg.author == client.user and msg.content.startswith("Cap:"):
-                    user_name = msg.content.split(" ")[1]
-                    userlist.append(user_name)
+                if msg.author == client.user and ("capped" in msg.content):
+                    msg_lines = msg.content.split("\n")
+                    for cap_report in msg_lines:
+                        name_index = cap_report.find(" has")
+                        userlist.append(cap_report[:name_index])
             print(userlist)
             ret_str = ""
             for i in range(len(userlist)):
