@@ -2,6 +2,7 @@
 """Reads in clan data html and parses out the list of clan members."""
 from html.parser import HTMLParser
 from random import shuffle
+import time
 import subprocess
 import argparse
 import datetime
@@ -44,7 +45,6 @@ class MyHTMLParser(HTMLParser):
                 add_item = item[1:-1]
                 add_item = add_item.replace(u'\xa0', u' ')
                 clan_list.append(add_item)
-            shuffle(clan_list)
             self.data = clan_list
 
 def check_cap(user):
@@ -88,14 +88,22 @@ def add_cap_to_db(clan_list):
             # has a different value, then we need to update the account dict in the same way as
             # if the previous report is none.
             if previous_report is None or previous_report[0] < db_date:
-                primary_key_map = {"name": user}
-                account_dict = {"name": user, "last_cap_time": db_date}
-                account_record = Account(**account_dict)
-                add_list.append(upsert(Account, primary_key_map, account_record))
-                print(f"{user} last capped at the citadel on {cap_date}.")
-                capped_users.append((user, cap_date))
+                # Check to see if the time is in the database. If so, probably indicates a name
+                # change. If the time is already in, then we do not need to report it.
+                same_time = SESSION.query(Account.name, Account.last_cap_time).filter(Account.last_cap_time == db_date).first()
+                if same_time is not None:
+                    print("Name change found.")
+                else:
+                    primary_key_map = {"name": user}
+                    account_dict = {"name": user, "last_cap_time": db_date}
+                    account_record = Account(**account_dict)
+                    add_list.append(upsert(Account, primary_key_map, account_record))
+                    print(f"{user} last capped at the citadel on {cap_date}.")
+                    capped_users.append((user, cap_date))
+                    # print(capped_users)
         else:
-            print(f"{user} has not capped at the citadel.")
+            pass
+            # print(f"{user} has not capped at the citadel.")
 
     add_list = [item for item in add_list if item is not None]
     SESSION.add_all(add_list)
@@ -121,6 +129,7 @@ def main():
     parser.add_argument("-b", "--bot", help="Runs only the bot", action="store_true")
     # parser.add_argument("-r", "--reset", help="Zeros out existing caps", action="store_true")
     parser.add_argument("-i", "--init", help="Reinitializes the database", action="store_true")
+    parser.add_argument("-f", "--force", help="Force sends a message", action="store_true")
     args = parser.parse_args()
     # if args.reset:
     #     erase_caps()
@@ -133,7 +142,7 @@ def main():
         req_html = req_data.text
         clan_parser.feed(req_html)
         clan_list = clan_parser.data
-        print(clan_list)
+        # print(clan_list)
         capped_users = add_cap_to_db(clan_list)
         token = ""
         with open("/home/austin/Documents/capbot/token.txt", "r") as tokenfile:
@@ -147,7 +156,12 @@ def main():
         with open("/home/austin/Documents/capbot/token.txt", "r") as tokenfile:
             token = tokenfile.read().strip()
         run_bot([], token)
-
+    elif args.force:
+        token = ""
+        with open("/home/austin/Documents/capbot/token.txt", "r") as tokenfile:
+            token = tokenfile.read().strip()
+        capped_users = [("iMath", "16-Nov-2017 05:17")]
+        run_bot(capped_users, token)
 
 def run_bot(capped_users, token):
     """Actually runs the bot"""
@@ -161,16 +175,20 @@ def run_bot(capped_users, token):
         print(client.user.name)
         print(client.user.id)
         print('------')
-        with open("channel.txt", "r") as channel_file:
+
+    async def report_caps():
+        """Reports caps."""
+        await client.wait_until_ready()
+        with open("/home/austin/Documents/capbot/channel.txt", "r") as channel_file:
             channel_id = channel_file.read().strip()
-        if capped_users != []:
-            for (user, cap_date) in capped_users.reverse():
-                datetime_list = cap_date.split(" ")
-                date_report = datetime_list[0]
-                time_report = datetime_list[1]
-                msg_string = f"{user} has capped at the citadel on {date_report} at {time_report}."
-                await client.send_message(
-                    discord.Object(id=channel_id), msg_string)
+        capped_users.reverse()
+        for (user, cap_date) in capped_users:
+            datetime_list = cap_date.split(" ")
+            date_report = datetime_list[0]
+            time_report = datetime_list[1]
+            msg_string = f"{user} has capped at the citadel on {date_report} at {time_report}."
+            await client.send_message(
+                discord.Object(id=channel_id), msg_string)
 
     @client.event
     async def on_message(message):
@@ -183,29 +201,37 @@ def run_bot(capped_users, token):
             if "cap handler" in role_list:
                 info = message.content.split(" ")[1]
                 if info == "all":
-                    async for msg in client.logs_from(message.channel, limit=500):
+                    async for msg in client.logs_from(message.channel, limit=1000):
                         if msg.author == client.user:
+                            time.sleep(1)
                             await client.delete_message(msg)
                 elif info == "noncap":
-                    async for msg in client.logs_from(message.channel, limit=500):
+                    async for msg in client.logs_from(message.channel, limit=1000):
                         if msg.author == client.user and "capped" not in msg.content:
+                            time.sleep(1)
                             await client.delete_message(msg)
                 else:
                     # Try to interpret info as a message id. Thankfully bots fail gracefully
                     before_msg = await client.get_message(message.channel, info)
                     async for msg in client.logs_from(
-                            message.channel, limit=500, before=before_msg):
+                            message.channel, limit=1000, before=before_msg):
                         if msg.author == client.user:
+                            time.sleep(1)
                             await client.delete_message(msg)
 
         elif message.content.startswith('!help'):
             await client.send_message(
-                message.channel, ("Use !delmsgs <id> to delete all messages before the given "
-                                  "message id.\nUsing 'all' instead of an id will delete all "
-                                  "messages, and using 'noncap' will delete all messages that "
-                                  "aren't cap reports.\n!update forces a manual update.\n!vis "
-                                  "is a test command.\n!list will provide an itemized list of "
-                                  "all caps that have an existing report in this channel."))
+                message.channel, ("Commands:\n!delmsgs <argument> - using a message id will "
+                                  "delete all messages before that id. Using 'all' will delete "
+                                  "all messages, and using 'noncap' will delete all non-cap report "
+                                  "messages.\n!update - force a manual check of all alogs.\n!list "
+                                  "- generates a list of all users who have capped recently, by "
+                                  "looking at cap reports in the channel. Note that if there are "
+                                  "no cap messages, this will do nothing.\n!force <argument> - "
+                                  "the bot will check the database for cap info about the user, "
+                                  "and will send a message to the channel if cap info exists. "
+                                  "Using 'all' will send an update message to the channel for "
+                                  "every user in the database."))
 
         elif message.content.startswith('!list'):
             userlist = []
@@ -227,6 +253,37 @@ def run_bot(capped_users, token):
                 await client.send_message(message.channel, "Manually updating...")
                 subprocess.call(['./runcapbot.sh'])
 
+        elif message.content.startswith('!force'):
+            role_list = [role.name for role in message.author.roles]
+            if "cap handler" in role_list:
+                user = message.content.split(" ")[1]
+                if user == "all":
+                    capped_users = SESSION.query(Account.name, Account.last_cap_time).all()
+                    with open("/home/austin/Documents/capbot/channel.txt", "r") as channel_file:
+                        channel_id = channel_file.read().strip()
+                    for (user, cap_date) in capped_users:
+                        cap_date = datetime.datetime.strftime(cap_date, "%d-%b-%Y %H:%M")
+                        datetime_list = cap_date.split(" ")
+                        date_report = datetime_list[0]
+                        time_report = datetime_list[1]
+                        msg_string = f"{user} has capped at the citadel on {date_report} at {time_report}."
+                        await client.send_message(
+                            discord.Object(id=channel_id), msg_string)
+                else:
+                    cap_date = SESSION.query(Account.last_cap_time).filter(Account.name == user).first()
+                    if cap_date is not None:
+                        cap_date = cap_date[0]
+                        with open("/home/austin/Documents/capbot/channel.txt", "r") as channel_file:
+                            channel_id = channel_file.read().strip()
+                        cap_date = datetime.datetime.strftime(cap_date, "%d-%b-%Y %H:%M")
+                        datetime_list = cap_date.split(" ")
+                        date_report = datetime_list[0]
+                        time_report = datetime_list[1]
+                        msg_string = f"{user} has capped at the citadel on {date_report} at {time_report}."
+                        await client.send_message(
+                            discord.Object(id=channel_id), msg_string)
+
+    client.loop.create_task(report_caps())
     client.run(token)
 
 if __name__ == "__main__":
